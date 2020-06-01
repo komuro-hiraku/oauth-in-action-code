@@ -133,11 +133,16 @@ app.get('/fetch_resource', function(req, res) {
 		res.render('data', {resource: body});
 		return;
 	} else {
-		/*
-		 * Instead of always returning an error like we do here, refresh the access token if we have a refresh token
-		 */
-		console.log("resource status error code " + resource.statusCode);
-		res.render('error', {error: 'Unable to fetch resource. Status ' + resource.statusCode});
+		// refresh_tokenを使って access_token を取り直す
+		access_token = null;
+		if (refresh_token) {
+			refreshAccessToken(req, res);
+			return;
+		} else {
+			// refresh_token がなければリソースサーバーから返されたエラーを返す
+			res.render('error', {error: resource.statusCode});
+			return;
+		}
 	}
 	
 	
@@ -145,10 +150,40 @@ app.get('/fetch_resource', function(req, res) {
 
 var refreshAccessToken = function(req, res) {
 
-	/*
-	 * Use the refresh token to get a new access token
-	 */
+	// refresh_token で access_token を更新する処理を実装する
+	var form_data = qs.stringify({
+		grant_type: 'refresh_token',
+		refresh_token: refresh_token
+	});	// query string の形に変換
 	
+	// ContentType は form
+	// いつもの癖で application/json と書きがちなので注意
+	var headers = {
+		'Content-Type': 'application/x-www-form-urlencoded',
+		'Authorization': 'Basic ' + encodeClientCredentials(client.client_id, client.client_secret)
+	};
+
+	// 認可サーバーのトークンエンドポイントに対して POST リクエスト
+	var tokenResponse = request('POST', authServer.tokenEndpoint, {
+		body: form_data,
+		headers: headers
+	});
+
+	// tokenResponse を解析して access_token, refresh_token を更新する
+	if (tokenResponse.statusCode >= 200 && tokenResponse.statusCode < 300) {
+		var body = JSON.parse(tokenResponse.getBody());
+		access_token = body.access_token;
+		if (body.refresh_token) {
+			refresh_token = body.refresh_token;
+		}
+		res.redirect('/fetch_resource');	// 再度 `/fetch_resource` を呼ぶ。んだがこれ `/fetch_resource` 専用で良いの？
+		return;
+	} else {
+		// Token Response がエラーの場合、 refresh_token を破棄してエラー
+		refresh_token = null;
+		res.render('error', {error: 'Unable to refresh token.'});
+		return;
+	}
 };
 
 var buildUrl = function(base, options, hash) {
